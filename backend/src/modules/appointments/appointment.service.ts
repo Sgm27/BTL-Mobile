@@ -1,3 +1,13 @@
+/**
+ * appointment.service.ts
+ * Thuộc module Đặt lịch khám (Appointments) của Ngô Đức Sơn.
+ *
+ * Chứa toàn bộ logic nghiệp vụ cho luồng đặt lịch: tra cứu khung giờ trống,
+ * tạo lịch hẹn với cơ chế tự động phân bổ bác sĩ (load balancing), và quản lý
+ * vòng đời lịch hẹn theo state machine PENDING → CONFIRMED → AWAITING_PAYMENT
+ * → COMPLETED (hoặc CANCELED). Bảo đảm không đặt trùng khung giờ bằng
+ * optimistic locking + transaction.
+ */
 import { AppointmentStatus, DoctorStatus, Prisma, Role } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { AppError } from '../../utils/app-error';
@@ -11,6 +21,8 @@ import {
   RescheduleAppointmentInput,
 } from './appointment.types';
 
+// Cấu hình include dùng chung cho mọi truy vấn lịch hẹn: nạp kèm thông tin
+// bệnh nhân, bác sĩ (user/chuyên khoa/phòng khám), khung giờ, dịch vụ và đánh giá.
 const appointmentInclude = {
   patient: {
     select: {
@@ -57,6 +69,7 @@ type AppointmentRecord = Prisma.AppointmentGetPayload<{
   include: typeof appointmentInclude;
 }>;
 
+// Chuyển kiểu Decimal của Prisma về number; trả 0 nếu giá trị rỗng.
 function decimalToNumber(value: Prisma.Decimal | number | null | undefined): number {
   if (value === null || value === undefined) {
     return 0;
@@ -65,14 +78,17 @@ function decimalToNumber(value: Prisma.Decimal | number | null | undefined): num
   return Number(value);
 }
 
+// Định dạng Date thành chuỗi ISO 8601 (theo UTC), null nếu không có giá trị.
 function toIso(date: Date | null | undefined): string | null {
   return date ? date.toISOString() : null;
 }
 
+// Lấy phần ngày YYYY-MM-DD theo UTC từ Date.
 function toDateOnly(date: Date | null | undefined): string | null {
   return date ? date.toISOString().slice(0, 10) : null;
 }
 
+// Ánh xạ bản ghi Prisma sang DTO phẳng trả về cho client (chuẩn hoá Decimal, Date).
 function mapAppointment(record: AppointmentRecord): AppointmentDto {
   return {
     id: record.id,
@@ -144,6 +160,8 @@ function mapAppointment(record: AppointmentRecord): AppointmentDto {
   };
 }
 
+// Lấy doctorId từ userId; báo lỗi nếu không có hồ sơ bác sĩ hoặc bác sĩ chưa ở
+// trạng thái ACTIVE. Dùng để xác thực quyền truy cập theo role DOCTOR.
 async function getDoctorIdForUser(userId: string): Promise<string> {
   const doctor = await prisma.doctor.findUnique({
     where: { userId },
@@ -164,6 +182,9 @@ async function getDoctorIdForUser(userId: string): Promise<string> {
   return doctor.id;
 }
 
+// Kiểm tra quyền truy cập một lịch hẹn theo role:
+// ADMIN xem tất cả; PATIENT chỉ xem lịch của chính mình; DOCTOR chỉ xem lịch
+// được gán cho mình. Vi phạm thì ném lỗi forbidden.
 async function assertAppointmentAccess(
   appointment: AppointmentRecord,
   context: AppointmentUserContext
@@ -187,14 +208,20 @@ async function assertAppointmentAccess(
 }
 
 /**
- * Get available time slots for a specialty (optionally filtered by clinic) on a date.
- * Groups by startTime/endTime and counts how many doctors are free.
+ * Tra cứu các khung giờ còn trống theo chuyên khoa (có thể lọc thêm theo phòng
+ * khám) trong một ngày. Gom nhóm theo cặp startTime/endTime và đếm số bác sĩ
+ * đang rảnh ở mỗi khung; trả thêm phí trung bình và danh sách phòng khám.
+ * @param input.specialtyId Chuyên khoa cần tìm khung giờ.
+ * @param input.clinicId (tuỳ chọn) Giới hạn theo một phòng khám cụ thể.
+ * @param input.date Ngày dạng YYYY-MM-DD.
+ * @returns Danh sách khung giờ trống đã gom nhóm.
  */
 export async function getAvailableSlots(input: {
   specialtyId: string;
   clinicId?: string;
   date: string;
 }): Promise<AvailableSlotDto[]> {
+  // Chuẩn hoá ngày về mốc 00:00 UTC để khớp đúng cột date lưu theo UTC trong DB.
   const dateFilter = new Date(input.date + 'T00:00:00.000Z');
   if (Number.isNaN(dateFilter.getTime())) {
     throw AppError.badRequest('Invalid date');
@@ -221,7 +248,7 @@ export async function getAvailableSlots(input: {
     orderBy: [{ startTime: 'asc' }],
   });
 
-  // Group by startTime-endTime
+  // Gom nhóm theo cặp startTime-endTime
   const grouped = new Map<string, {
     startTime: string;
     endTime: string;
@@ -258,8 +285,12 @@ export async function getAvailableSlots(input: {
 }
 
 /**
- * Create appointment by specialty + date + time.
- * System auto-assigns an available doctor.
+ * Tạo lịch hẹn từ lựa chọn chuyên khoa + ngày + khung giờ. Hệ thống tự động
+ * phân bổ một bác sĩ đang rảnh phù hợp (ưu tiên bác sĩ ít lịch nhất để load
+ * balancing). Lịch mới luôn khởi tạo ở trạng thái PENDING.
+ * @param userId ID bệnh nhân đặt lịch.
+ * @param input Chuyên khoa, phòng khám (tuỳ chọn), ngày, giờ, dịch vụ, ghi chú.
+ * @returns Lịch hẹn vừa tạo (đã ánh xạ sang DTO).
  */
 export async function createAppointment(
   userId: string,
@@ -270,7 +301,7 @@ export async function createAppointment(
     throw AppError.badRequest('Invalid date');
   }
 
-  // Find an available slot matching specialty + clinic + date + time
+  // Tìm một khung giờ còn trống khớp chuyên khoa + phòng khám + ngày + giờ.
   const candidateSlot = await prisma.timeSlot.findFirst({
     where: {
       isBooked: false,
@@ -287,7 +318,7 @@ export async function createAppointment(
       doctor: { include: { specialty: true, clinic: true, user: true } },
     },
     orderBy: {
-      // Prefer doctor with fewer bookings today (load balance)
+      // Load balancing: ưu tiên bác sĩ có ít lịch hẹn nhất (sắp xếp _count tăng dần).
       doctor: { appointments: { _count: 'asc' } },
     },
   });
@@ -311,9 +342,12 @@ export async function createAppointment(
   }
 
   const serviceTotal = services.reduce((sum, s) => sum + decimalToNumber(s.price), 0);
-  const totalAmount = serviceTotal; // Fee comes from services added by doctor after exam
+  const totalAmount = serviceTotal; // Phí lấy từ các dịch vụ do bác sĩ thêm sau khi khám
 
+  // Bọc trong transaction: khoá khung giờ rồi tạo lịch hẹn, đảm bảo nguyên tử.
   const appointment = await prisma.$transaction(async (tx) => {
+    // Optimistic locking: chỉ khoá được khi khung giờ vẫn còn isBooked:false.
+    // Nếu count === 0 nghĩa là một request khác vừa giành mất khung giờ (race condition).
     const lockedSlot = await tx.timeSlot.updateMany({
       where: { id: candidateSlot.id, isBooked: false },
       data: { isBooked: true },
@@ -347,6 +381,11 @@ export async function createAppointment(
   return mapAppointment(appointment);
 }
 
+/**
+ * Lấy chi tiết một lịch hẹn theo ID. Kiểm tra quyền truy cập theo role trước
+ * khi trả về (ADMIN xem tất cả, PATIENT/DOCTOR chỉ xem lịch liên quan mình).
+ * @returns Chi tiết lịch hẹn dạng DTO.
+ */
 export async function getAppointmentById(
   context: AppointmentUserContext,
   appointmentId: string
@@ -364,6 +403,13 @@ export async function getAppointmentById(
   return mapAppointment(appointment);
 }
 
+/**
+ * Lấy danh sách lịch hẹn (có phân trang) theo ngữ cảnh người dùng:
+ * - PATIENT: chỉ lịch của chính mình.
+ * - DOCTOR: tất cả lịch PENDING cùng chuyên khoa (để nhận) + lịch đã gán cho mình.
+ * - ADMIN: toàn bộ. Có thể lọc theo status.
+ * @returns data + meta phân trang (page, limit, total, totalPages).
+ */
 export async function getMyAppointments(
   context: AppointmentUserContext,
   query: AppointmentListQuery
@@ -386,7 +432,8 @@ export async function getMyAppointments(
       where.status = query.status;
       where.doctorId = myDoctorId;
     } else {
-      // Show: all PENDING in my specialty + my own non-PENDING
+      // Hiển thị: mọi lịch PENDING cùng chuyên khoa (để bác sĩ nhận) + lịch không
+      // còn PENDING đã được gán cho chính bác sĩ này.
       where.OR = [
         {
           status: AppointmentStatus.PENDING,
@@ -399,7 +446,7 @@ export async function getMyAppointments(
       ];
     }
   } else {
-    // ADMIN sees all
+    // ADMIN xem được tất cả lịch hẹn
     if (query.status) {
       where.status = query.status;
     }
@@ -423,6 +470,12 @@ export async function getMyAppointments(
   };
 }
 
+/**
+ * Huỷ một lịch hẹn. Chỉ bệnh nhân sở hữu hoặc ADMIN được huỷ. Không huỷ được
+ * lịch đã CANCELED hoặc COMPLETED. Khi huỷ thành công sẽ giải phóng lại khung
+ * giờ (isBooked → false) để người khác có thể đặt.
+ * @returns Lịch hẹn sau khi chuyển sang trạng thái CANCELED.
+ */
 export async function cancelAppointment(
   context: AppointmentUserContext,
   appointmentId: string
@@ -436,6 +489,7 @@ export async function cancelAppointment(
     throw AppError.notFound('Appointment not found');
   }
 
+  // Chỉ chủ lịch (PATIENT) hoặc ADMIN mới được huỷ.
   if (context.role !== Role.ADMIN && appointment.patientId !== context.userId) {
     throw AppError.forbidden('You can only cancel your own appointment');
   }
@@ -448,7 +502,9 @@ export async function cancelAppointment(
     throw AppError.conflict('Completed appointments cannot be canceled');
   }
 
+  // Transaction: giải phóng khung giờ + cập nhật trạng thái lịch trong một bước.
   const canceled = await prisma.$transaction(async (tx) => {
+    // Trả lại khung giờ về trống để bác sĩ/bệnh nhân khác có thể đặt.
     await tx.timeSlot.updateMany({
       where: {
         id: appointment.timeSlotId,
@@ -473,9 +529,11 @@ export async function cancelAppointment(
 }
 
 /**
- * Any doctor in the same specialty can confirm a PENDING appointment.
- * First to confirm wins (optimistic lock on status).
- * Reassigns the appointment to the confirming doctor.
+ * Bác sĩ xác nhận một lịch hẹn PENDING (chuyển trạng thái PENDING → CONFIRMED).
+ * Bất kỳ bác sĩ nào cùng chuyên khoa đều có thể nhận; ai xác nhận trước thì
+ * thắng (optimistic locking trên status). Lịch sẽ được gán lại (reassign) cho
+ * bác sĩ vừa xác nhận. Chỉ role DOCTOR được phép.
+ * @returns Lịch hẹn sau khi CONFIRMED.
  */
 export async function confirmAppointment(
   context: AppointmentUserContext,
@@ -487,7 +545,7 @@ export async function confirmAppointment(
 
   const doctorId = await getDoctorIdForUser(context.userId);
 
-  // Get confirming doctor's specialty
+  // Lấy chuyên khoa của bác sĩ đang xác nhận
   const confirmingDoctor = await prisma.doctor.findUnique({
     where: { id: doctorId },
     select: { specialtyId: true },
@@ -504,29 +562,31 @@ export async function confirmAppointment(
 
   if (!appointment) throw AppError.notFound('Appointment not found');
 
-  // Must be same specialty
+  // Bác sĩ chỉ được nhận lịch thuộc đúng chuyên khoa của mình.
   if (appointment.doctor.specialtyId !== confirmingDoctor.specialtyId) {
     throw AppError.forbidden('Appointment is not in your specialty');
   }
 
   if (appointment.status !== AppointmentStatus.PENDING) {
-    throw AppError.conflict('Lịch hẹn này đã được bác sĩ khác nhận hoặc đã bị hủy.');
+    throw AppError.conflict('Lịch hẹn này đã được bác sĩ khác nhận hoặc đã bị huỷ.');
   }
 
-  // Optimistic lock: only update if still PENDING
+  // Optimistic locking: chỉ cập nhật nếu lịch VẪN còn PENDING. Điều kiện status
+  // trong where chống race condition khi nhiều bác sĩ bấm nhận cùng lúc.
   const result = await prisma.appointment.updateMany({
     where: { id: appointmentId, status: AppointmentStatus.PENDING },
     data: {
       status: AppointmentStatus.CONFIRMED,
-      doctorId, // reassign to confirming doctor
+      doctorId, // gán lại (reassign) lịch cho bác sĩ vừa xác nhận
     },
   });
 
+  // count === 0 → một bác sĩ khác đã giành nhận trước trong tích tắc.
   if (result.count === 0) {
     throw AppError.conflict('Lịch hẹn này đã được bác sĩ khác nhận.');
   }
 
-  // Fetch updated record
+  // Nạp lại bản ghi sau khi cập nhật
   const confirmed = await prisma.appointment.findUnique({
     where: { id: appointmentId },
     include: appointmentInclude,
@@ -536,8 +596,12 @@ export async function confirmAppointment(
 }
 
 /**
- * Reschedule an appointment to a new date/time.
- * Releases the old slot and locks a new one matching the original specialty/clinic.
+ * Đổi lịch hẹn sang ngày/giờ mới. Chỉ chủ lịch (PATIENT) được đổi và chỉ khi
+ * lịch còn ở trạng thái PENDING. Hệ thống giải phóng khung giờ cũ rồi khoá một
+ * khung giờ mới khớp đúng chuyên khoa/phòng khám ban đầu; lịch giữ lại PENDING.
+ * @param userId ID bệnh nhân sở hữu lịch.
+ * @param input Ngày + giờ mới mong muốn.
+ * @returns Lịch hẹn sau khi đổi.
  */
 export async function rescheduleAppointment(
   userId: string,
@@ -576,7 +640,7 @@ export async function rescheduleAppointment(
     throw AppError.badRequest('New time is identical to current time');
   }
 
-  // Find an available slot matching the original specialty + clinic
+  // Tìm khung giờ trống khớp đúng chuyên khoa + phòng khám của lịch gốc.
   const candidateSlot = await prisma.timeSlot.findFirst({
     where: {
       isBooked: false,
@@ -590,6 +654,7 @@ export async function rescheduleAppointment(
       },
     },
     orderBy: {
+      // Load balancing: chọn bác sĩ có ít lịch hẹn nhất.
       doctor: { appointments: { _count: 'asc' } },
     },
   });
@@ -598,19 +663,21 @@ export async function rescheduleAppointment(
     throw AppError.conflict('No available doctor for the selected time');
   }
 
+  // Transaction: giải phóng khung cũ + khoá khung mới + cập nhật lịch nguyên tử.
   const updated = await prisma.$transaction(async (tx) => {
-    // Free old slot
+    // Giải phóng khung giờ cũ về trống.
     await tx.timeSlot.updateMany({
       where: { id: original.timeSlotId, isBooked: true },
       data: { isBooked: false },
     });
 
-    // Lock new slot
+    // Optimistic locking: khoá khung giờ mới, chỉ thành công khi còn isBooked:false.
     const locked = await tx.timeSlot.updateMany({
       where: { id: candidateSlot.id, isBooked: false },
       data: { isBooked: true },
     });
 
+    // count === 0 → khung giờ mới vừa bị người khác giành (race condition).
     if (locked.count === 0) {
       throw AppError.conflict('Slot was just taken, please try again');
     }
@@ -620,7 +687,7 @@ export async function rescheduleAppointment(
       data: {
         timeSlotId: candidateSlot.id,
         doctorId: candidateSlot.doctorId,
-        // Reset to PENDING after reschedule
+        // Sau khi đổi lịch, đưa về PENDING để bác sĩ xác nhận lại.
         status: AppointmentStatus.PENDING,
       },
       include: appointmentInclude,
@@ -631,7 +698,11 @@ export async function rescheduleAppointment(
 }
 
 /**
- * Doctor rejects a pending appointment with a reason.
+ * Bác sĩ từ chối một lịch hẹn PENDING kèm lý do. Chỉ bác sĩ được gán lịch và
+ * chỉ khi lịch đang PENDING. Lịch chuyển sang CANCELED (lưu rejectionReason) và
+ * giải phóng lại khung giờ. Chỉ role DOCTOR được phép.
+ * @param reason Lý do từ chối (bắt buộc, lưu vào lịch).
+ * @returns Lịch hẹn sau khi bị từ chối (CANCELED).
  */
 export async function rejectAppointment(
   context: AppointmentUserContext,
@@ -654,7 +725,9 @@ export async function rejectAppointment(
     throw AppError.conflict('Only pending appointments can be rejected');
   }
 
+  // Transaction: giải phóng khung giờ + chuyển trạng thái lịch nguyên tử.
   const rejected = await prisma.$transaction(async (tx) => {
+    // Trả lại khung giờ về trống vì lịch bị từ chối.
     await tx.timeSlot.updateMany({
       where: { id: appointment.timeSlotId, isBooked: true },
       data: { isBooked: false },
@@ -674,8 +747,11 @@ export async function rejectAppointment(
 }
 
 /**
- * Doctor completes exam → AWAITING_PAYMENT.
- * Can add diagnosis and additional services.
+ * Bác sĩ hoàn tất khám (chuyển trạng thái CONFIRMED → AWAITING_PAYMENT). Có thể
+ * bổ sung chẩn đoán và thêm dịch vụ phát sinh; tổng tiền được cộng dồn theo các
+ * dịch vụ mới thêm. Chỉ bác sĩ được gán lịch và chỉ khi lịch đang CONFIRMED.
+ * @param input.diagnosis (tuỳ chọn) Chẩn đoán; input.serviceIds dịch vụ thêm.
+ * @returns Lịch hẹn sau khi chuyển sang AWAITING_PAYMENT.
  */
 export async function completeAppointment(
   context: AppointmentUserContext,
@@ -698,7 +774,7 @@ export async function completeAppointment(
     throw AppError.conflict('Only confirmed appointments can be completed');
   }
 
-  // Add extra services if provided
+  // Lọc ra các dịch vụ mới (chưa có trong lịch) để tránh thêm trùng.
   const newServiceIds = (input.serviceIds ?? []).filter(
     (sid) => !appointment.services.some((s) => s.serviceId === sid)
   );
@@ -713,6 +789,7 @@ export async function completeAppointment(
   const existingTotal = decimalToNumber(appointment.totalAmount);
   const addedTotal = newServices.reduce((sum, s) => sum + decimalToNumber(s.price), 0);
 
+  // Transaction: thêm dịch vụ phát sinh + cập nhật trạng thái/tổng tiền nguyên tử.
   const completed = await prisma.$transaction(async (tx) => {
     if (newServices.length > 0) {
       await tx.appointmentService.createMany({
@@ -739,7 +816,11 @@ export async function completeAppointment(
 }
 
 /**
- * Patient confirms payment → COMPLETED.
+ * Bệnh nhân xác nhận thanh toán (chuyển trạng thái AWAITING_PAYMENT →
+ * COMPLETED). Tạo bản ghi payment tương ứng và đóng lịch hẹn. PATIENT chỉ
+ * thanh toán được lịch của mình; chỉ áp dụng khi lịch đang AWAITING_PAYMENT.
+ * @param paymentMethod Phương thức thanh toán (VNPAY | MOMO | CASH).
+ * @returns Lịch hẹn sau khi COMPLETED.
  */
 export async function payAppointment(
   context: AppointmentUserContext,
@@ -761,8 +842,9 @@ export async function payAppointment(
     throw AppError.conflict('Appointment is not awaiting payment');
   }
 
+  // Transaction: ghi nhận thanh toán + đóng lịch hẹn trong cùng một bước.
   const paid = await prisma.$transaction(async (tx) => {
-    // Create payment record
+    // Tạo bản ghi thanh toán (transactionId sinh tạm theo timestamp cho demo).
     await tx.payment.create({
       data: {
         appointmentId,

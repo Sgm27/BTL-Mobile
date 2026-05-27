@@ -1,3 +1,20 @@
+/**
+ * BookingScreen — Màn hình đặt lịch khám
+ * Thuộc phần của Ngô Đức Sơn — module Booking & Appointment.
+ *
+ * Màn hình multi-step cho phép bệnh nhân đặt lịch khám theo luồng:
+ *   Bước 1 — Chọn chuyên khoa (grid 2 cột, có icon + màu riêng mỗi chuyên khoa)
+ *   Bước 2 — Chọn phòng khám (bản đồ + danh sách; mặc định "Bất kỳ phòng khám nào")
+ *   Bước 3 — Chọn ngày khám (DateTimePicker inline, tối thiểu là hôm nay)
+ *   Bước 4 — Chọn khung giờ (grid slot từ API getAvailableSlots, tự reload khi đổi ngày/chuyên khoa)
+ *   Bước 5 — Nhập triệu chứng / ghi chú (tuỳ chọn)
+ *   Bước 6 — Xác nhận + Đặt lịch (tóm tắt + nút confirm)
+ *
+ * Sau khi xác nhận thành công → gọi POST /api/v1/appointments → hiện modal thành công
+ * (Lottie animation) → điều hướng đến màn hình chi tiết lịch hẹn vừa tạo.
+ *
+ * Các bước sau bước 1 chỉ hiện khi bước trước đã được chọn (conditional reveal với FadeInView).
+ */
 import { useCallback, useEffect, useState } from 'react';
 import {
   Modal,
@@ -6,7 +23,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Button, RadioButton, Snackbar, Text, TextInput } from 'react-native-paper';
+import { Button, Snackbar, Text, TextInput } from 'react-native-paper';
 import { GlassCard } from '../../components/ui/GlassCard';
 import { FadeInView, GradientHeader, ScreenContainer } from '../../components/shared';
 import { formatLongDate, formatVND, getErrorMessage } from '../../utils/format';
@@ -21,19 +38,18 @@ import {
   getAvailableSlots,
   type AvailableSlot,
 } from '../../services/appointments.service';
-import type { CreatePaymentResponse } from '../../services/payment.service';
 import type { Specialty, Clinic, Appointment } from '../../types';
 import { ClinicMapView } from '../../components/maps/ClinicMapView';
 import { useUserLocation } from '../../hooks/use-user-location';
 
-// Local color tokens (figmaColors doesn't include these accents)
+// Màu sắc nội bộ (các accent chưa có trong figmaColors)
 const ACCENT_ORANGE = '#F57C00';
 const ACCENT_PURPLE = '#7C4DFF';
 const ACCENT_INDIGO = '#5856D6';
 const ACCENT_PINK = '#FF2D55';
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Hàm tiện ích
 // ---------------------------------------------------------------------------
 
 function getTodayDate(): string {
@@ -41,7 +57,7 @@ function getTodayDate(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Constants
+// Hằng số
 // ---------------------------------------------------------------------------
 
 const H_MARGIN = 16;
@@ -85,7 +101,7 @@ function getSpecialtyColor(index: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Conditional reveal wrapper (uses shared FadeInView when visible)
+// Wrapper hiện/ẩn theo điều kiện (dùng FadeInView khi visible)
 // ---------------------------------------------------------------------------
 
 interface RevealProps {
@@ -100,7 +116,7 @@ function Reveal({ visible, delay = 0, children }: RevealProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Section header with step number
+// Tiêu đề bước kèm số thứ tự
 // ---------------------------------------------------------------------------
 
 interface SectionHeaderProps {
@@ -149,7 +165,7 @@ const sectionHeaderStyles = StyleSheet.create({
 });
 
 // ---------------------------------------------------------------------------
-// Specialty card (2-column grid)
+// Thẻ chuyên khoa (lưới 2 cột)
 // ---------------------------------------------------------------------------
 
 interface SpecialtyCardProps {
@@ -239,11 +255,11 @@ const specCardStyles = StyleSheet.create({
 });
 
 // ---------------------------------------------------------------------------
-// Clinic card
+// Thẻ phòng khám
 // ---------------------------------------------------------------------------
 
 interface ClinicCardProps {
-  clinic: Clinic | null; // null = "Any clinic"
+  clinic: Clinic | null; // null = "Bất kỳ phòng khám nào"
   selected: boolean;
   onPress: () => void;
 }
@@ -331,7 +347,7 @@ const clinicCardStyles = StyleSheet.create({
 });
 
 // ---------------------------------------------------------------------------
-// Time slot card (grid)
+// Thẻ khung giờ (lưới)
 // ---------------------------------------------------------------------------
 
 interface SlotCardProps {
@@ -430,7 +446,7 @@ const slotCardStyles = StyleSheet.create({
 });
 
 // ---------------------------------------------------------------------------
-// Summary row
+// Hàng tóm tắt thông tin
 // ---------------------------------------------------------------------------
 
 interface SummaryRowProps {
@@ -484,65 +500,29 @@ const summaryStyles = StyleSheet.create({
 });
 
 // ---------------------------------------------------------------------------
-// Payment method option
-// ---------------------------------------------------------------------------
-
-type PaymentMethod = 'CASH' | 'VNPAY' | 'MOMO';
-
-interface PaymentMethodInfo {
-  value: PaymentMethod;
-  label: string;
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
-  color: string;
-  desc: string;
-}
-
-const PAYMENT_METHODS: PaymentMethodInfo[] = [
-  {
-    value: 'CASH',
-    label: 'Tiền mặt',
-    icon: 'cash',
-    color: figmaColors.success,
-    desc: 'Thanh toán tại phòng khám',
-  },
-  {
-    value: 'VNPAY',
-    label: 'VNPAY',
-    icon: 'bank-outline',
-    color: figmaColors.primary,
-    desc: 'Thanh toán qua cổng VNPAY',
-  },
-  {
-    value: 'MOMO',
-    label: 'Momo',
-    icon: 'wallet-outline',
-    color: ACCENT_PINK,
-    desc: 'Thanh toán qua ví Momo',
-  },
-];
-
-// ---------------------------------------------------------------------------
-// Success result type
+// Kiểu kết quả đặt lịch
 // ---------------------------------------------------------------------------
 
 interface BookingResult {
   appointment: Appointment;
-  payment: CreatePaymentResponse | null;
 }
 
 // ---------------------------------------------------------------------------
-// Main screen
+// Màn hình chính
 // ---------------------------------------------------------------------------
 
 export function BookingScreen() {
+  // specialtyId có thể được truyền từ màn hình Home (shortcut "Đặt lịch theo chuyên khoa")
   const { specialtyId } = useLocalSearchParams<{ specialtyId?: string }>();
 
   // --- Data state ---
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
   const [clinics, setClinics] = useState<Clinic[]>([]);
+  // slots: danh sách khung giờ trống lấy từ API, reload khi specialty/clinic/date thay đổi
   const [slots, setSlots] = useState<AvailableSlot[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
 
+  // Vị trí GPS người dùng (dùng để sắp xếp phòng khám theo khoảng cách gần nhất)
   const { location: userLocation } = useUserLocation();
 
   // --- Selection state ---
@@ -552,8 +532,6 @@ export function BookingScreen() {
   const [date, setDate] = useState(getTodayDate());
   const [selectedTime, setSelectedTime] = useState('');
   const [notes, setNotes] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
-
   // --- UI state ---
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -562,6 +540,7 @@ export function BookingScreen() {
   const [bookingResult, setBookingResult] = useState<BookingResult | null>(null);
 
   // --- Load initial data ---
+  // Fetch song song danh sách chuyên khoa và phòng khám khi màn hình mount
   useEffect(() => {
     Promise.all([getSpecialties(), getClinics()])
       .then(([specs, cls]) => {
@@ -573,6 +552,7 @@ export function BookingScreen() {
   }, []);
 
   // --- Auto-select specialty from route params ---
+  // Nếu màn hình được mở từ shortcut (Home truyền specialtyId), tự động chọn chuyên khoa đó
   useEffect(() => {
     if (specialtyId && specialties.length > 0) {
       const match = specialties.find((s) => s.id === specialtyId);
@@ -583,6 +563,8 @@ export function BookingScreen() {
   }, [specialtyId, specialties]);
 
   // --- Load slots when specialty + date change ---
+  // Gọi API GET /api/v1/appointments/available-slots mỗi khi specialty/clinic/date thay đổi
+  // Reset selectedTime để tránh chọn slot không còn hợp lệ
   const loadSlots = useCallback(async () => {
     if (!selectedSpecialty || !date) return;
     setSlotsLoading(true);
@@ -614,6 +596,7 @@ export function BookingScreen() {
   }
 
   // --- Book + Pay ---
+  // Xử lý xác nhận đặt lịch: validate → gọi API tạo lịch → hiện modal thành công
   async function handleConfirm(): Promise<void> {
     if (!selectedSpecialty || !selectedTime) {
       setNotice('Vui lòng chọn chuyên khoa và khung giờ khám.');
@@ -622,7 +605,7 @@ export function BookingScreen() {
 
     setSubmitting(true);
     try {
-      // 1. Create appointment
+      // Gọi POST /api/v1/appointments; backend tự phân công bác sĩ (load balancing)
       const appointment = await createAppointment({
         specialtyId: selectedSpecialty,
         clinicId: selectedClinic || undefined,
@@ -632,7 +615,8 @@ export function BookingScreen() {
         notes: notes.trim() || undefined,
       });
 
-      setBookingResult({ appointment, payment: null });
+      // Lưu kết quả để hiển thị trong modal thành công
+      setBookingResult({ appointment });
       setShowSuccess(true);
     } catch (err) {
       setNotice(getErrorMessage(err));
@@ -647,10 +631,11 @@ export function BookingScreen() {
   const selectedSlot = slots.find((s) => s.startTime === selectedTime);
   const estimatedFee = formatVND(selectedSlot?.avgFee ?? 0);
 
+  // Các cờ conditional reveal: mỗi bước chỉ hiện sau khi bước trước đã được chọn
   const showClinic = Boolean(selectedSpecialty);
   const showDate = Boolean(selectedSpecialty);
   const showSlots = Boolean(selectedSpecialty && date);
-  const showReview = Boolean(selectedTime);
+  const showReview = Boolean(selectedTime); // Bước 5+6 chỉ hiện khi đã chọn slot
 
   // --- Render ---
   if (initialLoading) {
@@ -688,7 +673,7 @@ export function BookingScreen() {
         }
       />
       <View style={styles.content}>
-        {/* Step 1: Specialty Selection */}
+        {/* Bước 1: Chọn chuyên khoa */}
         <Reveal visible delay={0}>
           <SectionHeader
             step={1}
@@ -743,7 +728,7 @@ export function BookingScreen() {
           </View>
         </Reveal>
 
-        {/* Step 3: Date Selection */}
+        {/* Bước 3: Chọn ngày khám */}
         <Reveal visible={showDate} delay={200}>
           <SectionHeader
             step={3}
@@ -764,7 +749,7 @@ export function BookingScreen() {
           </GlassCard>
         </Reveal>
 
-        {/* Step 4: Time Slot Selection */}
+        {/* Bước 4: Chọn giờ khám — danh sách slot tải lại mỗi khi specialty/clinic/date đổi */}
         <Reveal visible={showSlots} delay={300}>
           <SectionHeader
             step={4}
@@ -834,7 +819,7 @@ export function BookingScreen() {
           />
         </Reveal>
 
-        {/* Step 6: Review & Payment */}
+        {/* Bước 6: Tóm tắt lịch hẹn + nút xác nhận — hiện khi đã chọn đủ specialty + slot */}
         <Reveal visible={showReview} delay={200}>
           <SectionHeader
             step={6}
@@ -889,7 +874,7 @@ export function BookingScreen() {
               Thanh toán sẽ được thực hiện sau khi bác sĩ hoàn tất khám.
             </Text>
 
-            {/* Confirm button */}
+            {/* Nút xác nhận */}
             <Button
               mode="contained"
               onPress={handleConfirm}
@@ -908,7 +893,7 @@ export function BookingScreen() {
         </Reveal>
       </View>
 
-      {/* Success Modal */}
+      {/* Modal thành công: hiện Lottie animation + tóm tắt + nút điều hướng sau khi đặt lịch OK */}
       <Modal visible={showSuccess} animationType="fade" transparent statusBarTranslucent>
         <View style={successStyles.backdrop}>
           <View style={successStyles.card}>
@@ -974,7 +959,7 @@ export function BookingScreen() {
               mode="text"
               onPress={() => {
                 setShowSuccess(false);
-                // Navigate to home tab
+                // Điều hướng về tab trang chủ
                 router.navigate('/(tabs)/home' as never);
               }}
               textColor={figmaColors.textSecondary}
@@ -1001,7 +986,7 @@ export function BookingScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// Styles
+// Style
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
@@ -1092,54 +1077,12 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: figmaColors.border,
   },
-  paymentTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: theme.colors.onSurface,
-    marginBottom: 8,
-  },
   paymentNote: {
     fontSize: 13,
     color: figmaColors.textSecondary,
     textAlign: 'center',
     fontStyle: 'italic',
     marginVertical: 8,
-  },
-  paymentMethods: {
-    gap: 8,
-    marginBottom: ELEMENT_GAP,
-  },
-  paymentOption: {
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: figmaColors.border,
-    backgroundColor: '#fff',
-    padding: 12,
-  },
-  paymentOptionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  paymentIconCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  paymentTextCol: {
-    flex: 1,
-  },
-  paymentLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: theme.colors.onSurface,
-  },
-  paymentDesc: {
-    fontSize: 12,
-    color: figmaColors.textSecondary,
-    marginTop: 1,
   },
   confirmBtn: {
     borderRadius: 14,

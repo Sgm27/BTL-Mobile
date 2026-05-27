@@ -1,3 +1,10 @@
+/**
+ * DoctorPendingScreen — Màn hình chờ duyệt hồ sơ bác sĩ
+ * Thuộc phần của Ngô Đức Sơn (module Booking/Schedule — shared infra).
+ * Hiển thị khi tài khoản bác sĩ có doctorStatus = 'PENDING' hoặc 'REJECTED'.
+ * Cho phép kéo xuống / nhấn nút để gọi loadUser() kiểm tra trạng thái mới nhất
+ * mà không cần đăng xuất rồi đăng nhập lại.
+ */
 import { useCallback, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Button, Text } from 'react-native-paper';
@@ -14,14 +21,20 @@ import {
   figmaSpacing,
 } from '../../constants/theme';
 
+/**
+ * Màn hình chờ duyệt / từ chối hồ sơ: hiển thị tiến trình 3 bước
+ * (đăng ký → xét duyệt → kích hoạt) với màu sắc phù hợp theo trạng thái.
+ */
 export function DoctorPendingScreen() {
   const insets = useSafeAreaInsets();
   const { user, loadUser, logout } = useAuthStore();
   const [refreshing, setRefreshing] = useState(false);
 
+  // Đọc doctorStatus từ store để quyết định hiển thị giao diện "chờ duyệt" hay "bị từ chối"
   const doctorStatus = user?.doctorStatus;
   const isRejected = doctorStatus === 'REJECTED';
 
+  // Gọi loadUser() để làm mới thông tin tài khoản và kiểm tra trạng thái duyệt mới nhất
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {

@@ -1,3 +1,16 @@
+/**
+ * ReviewScreen — Màn hình viết đánh giá bác sĩ
+ * Thuộc phần của Ngô Đức Sơn — module Booking & Appointment.
+ *
+ * Cho phép bệnh nhân gửi đánh giá (1–5 sao + nhận xét văn bản) cho bác sĩ
+ * sau khi lịch hẹn đã hoàn thành và đã thanh toán.
+ *
+ * Luồng chính:
+ *   1. Fetch GET /api/v1/appointments/:id → hiện thông tin bác sĩ để xác nhận context
+ *   2. Người dùng chọn số sao (1–5) + nhập nhận xét (tuỳ chọn)
+ *   3. Nhấn "Gửi đánh giá" → POST /api/v1/reviews { appointmentId, rating, comment }
+ *   4. Thành công → hiện snackbar → router.back() sau 800ms
+ */
 import { useEffect, useState } from 'react';
 import {
   Pressable,
@@ -26,7 +39,7 @@ import { api, extractData } from '../../services/api';
 import type { Appointment } from '../../types';
 
 // ---------------------------------------------------------------------------
-// Star rating
+// Component chọn số sao đánh giá
 // ---------------------------------------------------------------------------
 
 function StarRating({
@@ -60,7 +73,7 @@ const RATING_HINTS: Record<number, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// Screen
+// Màn hình chính
 // ---------------------------------------------------------------------------
 
 interface ReviewScreenProps {
@@ -79,6 +92,8 @@ export function ReviewScreen({ appointmentId }: ReviewScreenProps) {
     fetchAppointment();
   }, [appointmentId]);
 
+  // Fetch thông tin lịch hẹn để hiện card bác sĩ ở đầu màn hình
+  // GET /api/v1/appointments/:id
   async function fetchAppointment() {
     try {
       setLoading(true);
@@ -93,6 +108,8 @@ export function ReviewScreen({ appointmentId }: ReviewScreenProps) {
     }
   }
 
+  // Gửi đánh giá: validate → POST /api/v1/reviews { appointmentId, rating, comment }
+  // Nếu comment rỗng thì không gửi field đó (undefined) để backend bỏ qua
   async function handleSubmit() {
     if (rating === 0) {
       setSnackbar({ visible: true, message: 'Vui lòng chọn mức đánh giá.' });
@@ -154,7 +171,7 @@ export function ReviewScreen({ appointmentId }: ReviewScreenProps) {
             </View>
           ) : (
             <>
-              {/* Doctor info */}
+              {/* Thông tin bác sĩ */}
               <FadeInView delay={80} distance={20}>
                 <GlassCard style={styles.card}>
                   <View style={styles.doctorRow}>
@@ -178,7 +195,7 @@ export function ReviewScreen({ appointmentId }: ReviewScreenProps) {
                 </GlassCard>
               </FadeInView>
 
-              {/* Star rating */}
+              {/* Chọn số sao */}
               <FadeInView delay={160} distance={20}>
                 <GlassCard style={styles.card}>
                   <View style={styles.ratingSection}>
@@ -197,7 +214,7 @@ export function ReviewScreen({ appointmentId }: ReviewScreenProps) {
                 </GlassCard>
               </FadeInView>
 
-              {/* Comment */}
+              {/* Nhận xét văn bản */}
               <FadeInView delay={240} distance={20}>
                 <GlassCard style={styles.card}>
                   <Text style={styles.sectionLabel}>Nhận xét của bạn</Text>
@@ -214,7 +231,7 @@ export function ReviewScreen({ appointmentId }: ReviewScreenProps) {
                 </GlassCard>
               </FadeInView>
 
-              {/* Submit */}
+              {/* Nút gửi */}
               <FadeInView delay={320} distance={20}>
                 <Pressable
                   onPress={handleSubmit}
@@ -256,7 +273,7 @@ export function ReviewScreen({ appointmentId }: ReviewScreenProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Styles
+// Style
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({

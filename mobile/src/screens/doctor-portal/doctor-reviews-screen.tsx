@@ -1,3 +1,10 @@
+/**
+ * DoctorReviewsScreen — Màn hình xem đánh giá của bác sĩ
+ * Thuộc phần của Ngô Đức Sơn (module Review).
+ * Lấy doctorId từ lịch hẹn đã xác nhận, sau đó gọi GET /doctors/:id/reviews
+ * để tải toàn bộ đánh giá. Hiển thị thống kê (điểm trung bình, phân phối sao)
+ * và danh sách đánh giá có thể lọc theo số sao.
+ */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
@@ -43,15 +50,21 @@ function formatDate(dateStr?: string): string {
     .padStart(2, '0')}/${d.getFullYear()}`;
 }
 
+/**
+ * Màn hình đánh giá: tự động lấy doctorId từ lịch hẹn → tải đánh giá →
+ * tính điểm trung bình + phân phối → cho phép lọc theo số sao.
+ */
 export function DoctorReviewsScreen() {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<StarFilter>('ALL');
 
+  // Tải đánh giá: trước tiên lấy doctorId từ /appointments/me (lấy ca không phải PENDING),
+  // sau đó gọi GET /doctors/:doctorId/reviews để lấy danh sách đánh giá
   const fetchReviews = useCallback(async () => {
     try {
-      // Get own doctorId from a CONFIRMED/COMPLETED appointment (not PENDING)
+      // Lấy doctorId từ ca CONFIRMED/COMPLETED (bỏ qua PENDING)
       const apptsRes = await api.get('/appointments/me', {
         params: { limit: 50 },
       });
@@ -65,7 +78,7 @@ export function DoctorReviewsScreen() {
       const reviewsRes = await api.get(`/doctors/${doctorId}/reviews`, {
         params: { limit: 100 },
       });
-      // API may return { data: [...] } or { data: { items: [...] } }
+      // API có thể trả về { data: [...] } hoặc { data: { items: [...] } }
       const raw = extractData<Review[] | { items: Review[] }>(reviewsRes);
       if (Array.isArray(raw)) {
         setReviews(raw);
@@ -75,7 +88,7 @@ export function DoctorReviewsScreen() {
         setReviews([]);
       }
     } catch {
-      // silently handle
+      // bỏ qua lỗi
     } finally {
       setLoading(false);
     }
@@ -91,6 +104,7 @@ export function DoctorReviewsScreen() {
     setRefreshing(false);
   }, [fetchReviews]);
 
+  // Tính thống kê đánh giá: tổng số, điểm trung bình, phân phối theo từng mức sao
   const stats = useMemo(() => {
     const total = reviews.length;
     const avg =
@@ -105,6 +119,7 @@ export function DoctorReviewsScreen() {
     return { total, avg, dist };
   }, [reviews]);
 
+  // Lọc danh sách hiển thị theo chip số sao được chọn ('ALL' = hiển thị tất cả)
   const filtered = useMemo(() => {
     if (filter === 'ALL') return reviews;
     return reviews.filter((r) => Math.round(r.rating) === filter);

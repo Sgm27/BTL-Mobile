@@ -1,3 +1,10 @@
+/**
+ * DoctorHomeScreen — Màn hình trang chủ cổng bác sĩ
+ * Thuộc phần của Ngô Đức Sơn (module Booking/Schedule/Review).
+ * Hiển thị thống kê ca làm việc, danh sách lịch hẹn cần xử lý (PENDING toàn
+ * chuyên khoa + các ca hôm nay đã xác nhận), và cho phép bác sĩ chấp nhận /
+ * từ chối từng ca trực tiếp từ màn hình chính.
+ */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -25,7 +32,7 @@ import { api, extractPaginatedData } from '../../services/api';
 import type { Appointment } from '../../types';
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Hàm tiện ích
 // ---------------------------------------------------------------------------
 
 function formatTime(t?: string): string {
@@ -39,18 +46,19 @@ function isToday(dateStr?: string): boolean {
   return dateStr.slice(0, 10) === today;
 }
 
+// Bảng cấu hình màu sắc và nhãn tiếng Việt cho từng status lịch hẹn
 const STATUS_CONFIG: Record<string, { color: string; bg: string; label: string }> = {
   PENDING: { color: figmaColors.warning, bg: figmaColors.warningBg, label: 'Chờ xác nhận' },
   CONFIRMED: { color: figmaColors.primary, bg: figmaColors.pastelBlue, label: 'Đã xác nhận' },
   AWAITING_PAYMENT: { color: '#7C4DFF', bg: figmaColors.pastelPurple, label: 'Chờ thanh toán' },
   COMPLETED: { color: figmaColors.success, bg: figmaColors.successBg, label: 'Hoàn thành' },
-  CANCELED: { color: figmaColors.error, bg: figmaColors.errorBg, label: 'Đã hủy' },
+  CANCELED: { color: figmaColors.error, bg: figmaColors.errorBg, label: 'Đã huỷ' },
 };
 
 const HEADER_COLORS = [figmaColors.info, '#00695C'] as const;
 
 // ---------------------------------------------------------------------------
-// Animated Stat Card
+// Thẻ thống kê có hiệu ứng animation
 // ---------------------------------------------------------------------------
 
 interface StatCardProps {
@@ -89,7 +97,7 @@ function StatCard({ icon, value, label, color, bg, delay }: StatCardProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Spring-animated Pressable button
+// Nút Pressable có hiệu ứng spring
 // ---------------------------------------------------------------------------
 
 interface SpringButtonProps {
@@ -143,9 +151,13 @@ function SpringButton({ icon, label, iconColor, iconBg, onPress }: SpringButtonP
 }
 
 // ---------------------------------------------------------------------------
-// DoctorHomeScreen
+// Màn hình trang chủ bác sĩ
 // ---------------------------------------------------------------------------
 
+/**
+ * Màn hình trang chủ của bác sĩ: hiển thị số liệu tổng quan, hành động nhanh
+ * và toàn bộ lịch hẹn cần xử lý (PENDING mọi ngày + ca hôm nay đã xác nhận).
+ */
 export function DoctorHomeScreen() {
   const user = useAuthStore((s) => s.user);
 
@@ -155,14 +167,13 @@ export function DoctorHomeScreen() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
+  // Gọi API GET /appointments/me để lấy toàn bộ lịch hẹn của bác sĩ đang đăng nhập
   const fetchAppointments = useCallback(async () => {
     try {
       const apptRes = await api.get('/appointments/me', { params: { limit: 50, sort: 'date', order: 'asc' } });
       const { data } = extractPaginatedData<Appointment[]>(apptRes);
-      console.log('[doctor-home] fetched', data.length, 'appointments');
       setAppointments(data);
-    } catch (err) {
-      console.error('[doctor-home] fetch appointments failed:', err);
+    } catch {
     } finally {
       setLoading(false);
     }
@@ -180,27 +191,29 @@ export function DoctorHomeScreen() {
   }, [fetchAppointments]);
 
   // -----------------------------------------------------------------------
-  // Actions
+  // Xử lý hành động
   // -----------------------------------------------------------------------
 
+  // Gọi PUT /appointments/:id/confirm để bác sĩ chấp nhận lịch hẹn PENDING
   const handleConfirm = async (id: string) => {
     setActionLoading(id);
     try {
       await api.put(`/appointments/${id}/confirm`);
       await fetchAppointments();
     } catch {
-      // silently handle
+      // bỏ qua lỗi
     } finally {
       setActionLoading(null);
     }
   };
 
+  // Gọi PUT /appointments/:id/reject kèm lý do từ chối (nhập qua Alert.prompt)
   const handleReject = (id: string) => {
     Alert.prompt(
       'Từ chối lịch hẹn',
       'Vui lòng nhập lý do từ chối:',
       [
-        { text: 'Hủy', style: 'cancel' },
+        { text: 'Huỷ', style: 'cancel' },
         {
           text: 'Từ chối',
           style: 'destructive',
@@ -224,10 +237,13 @@ export function DoctorHomeScreen() {
 
 
   // -----------------------------------------------------------------------
-  // Computed
+  // Tính toán dữ liệu hiển thị
   // -----------------------------------------------------------------------
 
-  // All PENDING in specialty (any date) + today's non-PENDING non-CANCELED
+  // Tính toán danh sách hiển thị:
+  // - pendingAll: tất cả PENDING trong chuyên khoa (hàng đợi nhận ca, mọi ngày)
+  // - todayNonPending: các ca hôm nay đã xác nhận / đang chờ thanh toán / hoàn thành
+  // Tất cả PENDING trong chuyên khoa (mọi ngày) + ca hôm nay không phải PENDING/CANCELED
   const pendingAll = appointments.filter((a) => a.status === 'PENDING');
   const todayNonPending = appointments.filter(
     (a) => isToday(a.timeSlot?.date) && a.status !== 'CANCELED' && a.status !== 'PENDING'
@@ -236,10 +252,8 @@ export function DoctorHomeScreen() {
   const todayCompleted = displayAppointments.filter((a) => a.status === 'COMPLETED' || a.status === 'AWAITING_PAYMENT').length;
   const todayPending = pendingAll.length;
 
-  console.log('[doctor-home] appointments total:', appointments.length, 'pending:', pendingAll.length, 'display:', displayAppointments.length);
-
   // -----------------------------------------------------------------------
-  // Render
+  // Render giao diện
   // -----------------------------------------------------------------------
 
   const renderAppointmentCard = ({ item, index }: { item: Appointment; index: number }) => {
@@ -482,7 +496,7 @@ export function DoctorHomeScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// Styles
+// Style
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
@@ -646,60 +660,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: figmaColors.textSecondary,
     flex: 1,
-  },
-  completeSection: {
-    gap: figmaSpacing.sm + 2,
-    marginTop: figmaSpacing.xs,
-  },
-  diagnosisInput: {
-    backgroundColor: figmaColors.surface,
-    fontSize: 14,
-  },
-  servicePickerLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: figmaColors.textPrimary,
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  serviceChips: {
-    gap: 6,
-  },
-  serviceChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: figmaRadius.sm,
-    borderWidth: 1,
-    borderColor: figmaColors.border,
-    backgroundColor: figmaColors.surface,
-  },
-  serviceChipActive: {
-    borderColor: figmaColors.primary,
-    backgroundColor: figmaColors.pastelBlue,
-  },
-  serviceChipText: {
-    flex: 1,
-    fontSize: 13,
-    color: figmaColors.textSecondary,
-  },
-  serviceChipTextActive: {
-    color: figmaColors.primary,
-    fontWeight: '600',
-  },
-  serviceChipPrice: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: figmaColors.textMuted,
-  },
-  totalText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: figmaColors.primary,
-    textAlign: 'right',
-    marginTop: 4,
   },
   actionRow: {
     flexDirection: 'row',

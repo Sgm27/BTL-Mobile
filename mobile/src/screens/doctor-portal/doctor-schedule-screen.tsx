@@ -1,3 +1,10 @@
+/**
+ * DoctorScheduleScreen — Màn hình quản lý lịch làm việc (đăng ký ca)
+ * Thuộc phần của Ngô Đức Sơn (module Schedule).
+ * Cho phép bác sĩ chọn ngày trong tuần rồi đăng ký ca sáng (08:00–12:00)
+ * hoặc ca chiều (13:00–17:00) thông qua API POST /schedules/doctor/register.
+ * Hiển thị danh sách các ca đã đăng ký cho ngày được chọn.
+ */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
@@ -21,7 +28,7 @@ import {
 import { api, extractData } from '../../services/api';
 
 // ---------------------------------------------------------------------------
-// Types
+// Kiểu dữ liệu
 // ---------------------------------------------------------------------------
 
 interface WorkSchedule {
@@ -46,7 +53,7 @@ interface RegisteredShift {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Hàm tiện ích
 // ---------------------------------------------------------------------------
 
 const VN_DAY_LABELS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
@@ -54,7 +61,7 @@ const HEADER_COLORS = [figmaColors.info, '#00695C'] as const;
 
 function getWeekDays(): { label: string; date: string; isToday: boolean }[] {
   const today = new Date();
-  const dayOfWeek = today.getDay(); // 0=Sun, 1=Mon...
+  const dayOfWeek = today.getDay(); // 0=CN, 1=T2...
   const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
 
   const days: { label: string; date: string; isToday: boolean }[] = [];
@@ -85,7 +92,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// Spring Button
+// Nút Pressable có hiệu ứng spring
 // ---------------------------------------------------------------------------
 
 function SpringPressable({
@@ -130,9 +137,14 @@ function SpringPressable({
 }
 
 // ---------------------------------------------------------------------------
-// DoctorScheduleScreen
+// Màn hình lịch làm việc bác sĩ
 // ---------------------------------------------------------------------------
 
+/**
+ * Màn hình đăng ký ca làm việc theo tuần.
+ * Bác sĩ chọn ngày → xem 2 ca cố định (sáng/chiều) → nhấn đăng ký nếu chưa đăng ký.
+ * Dữ liệu ca đã đăng ký được lấy từ GET /schedules/doctor/me.
+ */
 export function DoctorScheduleScreen() {
   const weekDays = getWeekDays();
 
@@ -145,6 +157,7 @@ export function DoctorScheduleScreen() {
   const [registerLoading, setRegisterLoading] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState({ visible: false, message: '' });
 
+  // Hai ca cố định mỗi ngày; id được tạo động từ ngày đang chọn
   const availableShifts: WorkSchedule[] = [
     {
       id: `${selectedDate}-morning`,
@@ -162,6 +175,7 @@ export function DoctorScheduleScreen() {
     },
   ];
 
+  // Gọi GET /schedules/doctor/me để lấy danh sách ca đã đăng ký của bác sĩ
   const fetchSchedule = useCallback(async () => {
     try {
       const res = await api.get('/schedules/doctor/me');
@@ -184,12 +198,14 @@ export function DoctorScheduleScreen() {
     setRefreshing(false);
   }, [fetchSchedule]);
 
+  // Kiểm tra xem ca (date + shift) đã được đăng ký chưa bằng cách so sánh với danh sách
   const isShiftRegistered = (shift: WorkSchedule): boolean => {
     return registeredShifts.some(
       (s) => s.workSchedule.date?.slice(0, 10) === shift.date && s.workSchedule.shift === shift.shift
     );
   };
 
+  // Gọi POST /schedules/doctor/register để đăng ký ca sáng hoặc ca chiều
   const handleRegister = async (shift: WorkSchedule) => {
     setRegisterLoading(shift.id);
     try {
@@ -208,6 +224,7 @@ export function DoctorScheduleScreen() {
     }
   };
 
+  // Lọc ra các ca đã đăng ký đúng với ngày đang chọn để hiển thị ở phần "Ca làm đã đăng ký"
   const shiftsForDate = registeredShifts.filter(
     (s) => s.workSchedule.date?.slice(0, 10) === selectedDate
   );
@@ -403,7 +420,7 @@ export function DoctorScheduleScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// Styles
+// Style
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({

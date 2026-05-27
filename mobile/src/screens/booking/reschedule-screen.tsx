@@ -1,3 +1,16 @@
+/**
+ * RescheduleScreen — Màn hình đổi lịch hẹn
+ * Thuộc phần của Ngô Đức Sơn — module Booking & Appointment.
+ *
+ * Cho phép bệnh nhân chọn ngày và giờ mới cho lịch hẹn đang ở trạng thái PENDING.
+ *
+ * Luồng chính:
+ *   1. Fetch GET /api/v1/appointments/:id → hiện card lịch hẹn hiện tại
+ *   2. DateTimePicker → chọn ngày mới (giới hạn hôm nay đến +60 ngày)
+ *   3. Khi ngày thay đổi → gọi getAvailableSlots với chuyên khoa + phòng khám hiện tại
+ *   4. Người dùng chọn slot → nhấn "Xác nhận đổi lịch"
+ *      → PUT /api/v1/appointments/:id/reschedule → hiện Lottie success → router.back()
+ */
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -37,7 +50,7 @@ import { formatLongDate, formatShortDate, getErrorMessage } from '../../utils/fo
 import type { Appointment } from '../../types';
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Hàm tiện ích
 // ---------------------------------------------------------------------------
 
 const RESCHEDULE_GRADIENT = ['#7C4DFF', '#5E35B1'] as const;
@@ -54,7 +67,7 @@ function toDateOnly(date: Date): string {
 }
 
 // ---------------------------------------------------------------------------
-// Slot button
+// Nút khung giờ
 // ---------------------------------------------------------------------------
 
 interface SlotButtonProps {
@@ -156,7 +169,7 @@ const slotStyles = StyleSheet.create({
 });
 
 // ---------------------------------------------------------------------------
-// Main screen
+// Màn hình chính
 // ---------------------------------------------------------------------------
 
 interface RescheduleScreenProps {
@@ -178,6 +191,8 @@ export function RescheduleScreen({ appointmentId }: RescheduleScreenProps) {
 
   const [buttonScale] = useState(() => new Animated.Value(1));
 
+  // Fetch lịch hẹn hiện tại để hiện card "Lịch hẹn hiện tại" và khởi tạo ngày picker
+  // Dùng cờ `mounted` để tránh setState sau khi component đã unmount
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -187,6 +202,7 @@ export function RescheduleScreen({ appointmentId }: RescheduleScreenProps) {
         );
         if (!mounted) return;
         setAppointment(data);
+        // Khởi tạo picker về ngày hiện tại của lịch hẹn (nếu >= hôm nay)
         const apptDate = data.timeSlot?.date;
         if (apptDate) {
           const d = new Date(apptDate + 'T00:00:00');
@@ -206,6 +222,8 @@ export function RescheduleScreen({ appointmentId }: RescheduleScreenProps) {
     };
   }, [appointmentId]);
 
+  // Tải danh sách slot trống cho ngày mới — dùng chuyên khoa + phòng khám của bác sĩ hiện tại
+  // Gọi GET /api/v1/appointments/available-slots mỗi khi `date` hoặc `appointment` thay đổi
   const loadSlots = useCallback(async () => {
     if (!appointment?.doctor?.specialty?.id) return;
     setSlotsLoading(true);
@@ -254,6 +272,8 @@ export function RescheduleScreen({ appointmentId }: RescheduleScreenProps) {
     }).start();
   }
 
+  // Gọi API PUT /api/v1/appointments/:id/reschedule với ngày/giờ mới đã chọn
+  // Thành công → hiện màn hình Lottie success → tự động quay lại sau 1.4s
   async function handleConfirm() {
     if (!selectedSlot) {
       setNotice('Vui lòng chọn ngày và giờ mới');
@@ -339,7 +359,7 @@ export function RescheduleScreen({ appointmentId }: RescheduleScreenProps) {
         />
 
         <View style={styles.body}>
-          {/* Current appointment */}
+          {/* Lịch hẹn hiện tại */}
           <FadeInView delay={0}>
             <Text style={styles.sectionLabel}>Lịch hẹn hiện tại</Text>
             {doctor && currentSlot ? (
@@ -375,7 +395,7 @@ export function RescheduleScreen({ appointmentId }: RescheduleScreenProps) {
             </GlassCard>
           </FadeInView>
 
-          {/* Slots */}
+          {/* Danh sách khung giờ */}
           <FadeInView delay={160}>
             <Text style={styles.sectionLabel}>Chọn giờ mới</Text>
             <GlassCard style={styles.card} glassStyle="regular">
@@ -418,7 +438,7 @@ export function RescheduleScreen({ appointmentId }: RescheduleScreenProps) {
             </GlassCard>
           </FadeInView>
 
-          {/* Confirm button */}
+          {/* Nút xác nhận */}
           <FadeInView delay={240}>
             <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
               <Button

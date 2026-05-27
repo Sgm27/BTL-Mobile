@@ -1,3 +1,11 @@
+/**
+ * appointment.routes.ts
+ * Thuộc module Đặt lịch khám (Appointments) của Ngô Đức Sơn.
+ *
+ * Khai báo các endpoint dưới prefix /api/v1/appointments, gắn middleware
+ * authenticate (xác thực JWT) và authorize (phân quyền theo role) cho từng
+ * route, rồi ánh xạ tới controller tương ứng.
+ */
 import { Router, RequestHandler } from 'express';
 import { Role } from '@prisma/client';
 import { authenticate, authorize } from '../../middleware/auth.middleware';
@@ -14,6 +22,8 @@ import {
   rescheduleAppointmentController,
 } from './appointment.controller';
 
+// Bọc controller bất đồng bộ để mọi lỗi promise được chuyển tới error middleware
+// qua next, tránh phải lặp try/catch ở từng route.
 const asyncHandler = (handler: RequestHandler): RequestHandler => {
   return (req, res, next) => {
     Promise.resolve(handler(req, res, next)).catch(next);
@@ -22,7 +32,7 @@ const asyncHandler = (handler: RequestHandler): RequestHandler => {
 
 export const appointmentsRouter = Router();
 
-// Available slots - public, no auth needed (patient browses before booking)
+// Khung giờ trống - public, không cần xác thực (bệnh nhân xem trước khi đặt)
 appointmentsRouter.get('/available-slots', asyncHandler(getAvailableSlotsController));
 
 appointmentsRouter.post(

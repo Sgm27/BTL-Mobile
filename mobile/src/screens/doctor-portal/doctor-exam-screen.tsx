@@ -1,3 +1,10 @@
+/**
+ * DoctorExamScreen — Màn hình thực hiện ca khám bệnh
+ * Thuộc phần của Ngô Đức Sơn (module Booking/Schedule).
+ * Bác sĩ xem thông tin bệnh nhân, nhập chẩn đoán, thêm đơn thuốc, chọn dịch vụ
+ * đã sử dụng rồi hoàn thành ca bằng PUT /appointments/:id/complete.
+ * Sau khi hoàn thành, lịch hẹn chuyển sang trạng thái AWAITING_PAYMENT.
+ */
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Modal, Pressable, StyleSheet, View } from 'react-native';
 import { Button, Text, TextInput } from 'react-native-paper';
@@ -34,24 +41,29 @@ interface Props {
   appointmentId: string;
 }
 
+/**
+ * Màn hình khám bệnh chi tiết: tải song song thông tin lịch hẹn và danh sách
+ * dịch vụ, cho phép bác sĩ nhập chẩn đoán + đơn thuốc + dịch vụ rồi hoàn thành ca.
+ */
 export function DoctorExamScreen({ appointmentId }: Props) {
   const [appointment, setAppointment] = useState<Appointment | null>(null);
   const [loading, setLoading] = useState(true);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
 
-  // Exam inputs
+  // State nhập liệu ca khám
   const [diagnosis, setDiagnosis] = useState('');
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [completing, setCompleting] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // Add medicine form
+  // State form thêm thuốc
   const [showAddMed, setShowAddMed] = useState(false);
   const [medName, setMedName] = useState('');
   const [medDosage, setMedDosage] = useState('');
   const [medNotes, setMedNotes] = useState('');
 
+  // Tải song song chi tiết lịch hẹn (GET /appointments/:id) và danh sách dịch vụ (GET /services)
   const fetchData = useCallback(async () => {
     try {
       const [apptRes, svcRes] = await Promise.allSettled([
@@ -92,10 +104,13 @@ export function DoctorExamScreen({ appointmentId }: Props) {
     setMedicines((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // Tính tổng tiền dịch vụ đã chọn để hiển thị cho bác sĩ trước khi hoàn thành
   const totalAmount = services
     .filter((s) => selectedServiceIds.includes(s.id))
     .reduce((sum, s) => sum + Number(s.price ?? 0), 0);
 
+  // Gọi PUT /appointments/:id/complete với chẩn đoán và danh sách dịch vụ đã chọn;
+  // sau khi thành công hiển thị modal thành công (Lottie) rồi điều hướng về trang chủ
   const handleComplete = async () => {
     if (!diagnosis.trim()) {
       Alert.alert('Thiếu thông tin', 'Vui lòng nhập chẩn đoán trước khi hoàn thành.');
@@ -128,6 +143,7 @@ export function DoctorExamScreen({ appointmentId }: Props) {
 
   const patient = appointment.patient;
   const timeSlot = appointment.timeSlot;
+  // Ca đã hoàn thành (hoặc đang chờ thanh toán) → khoá toàn bộ input, ẩn nút hoàn thành
   const isCompleted = appointment.status === 'AWAITING_PAYMENT' || appointment.status === 'COMPLETED';
 
   return (
@@ -317,7 +333,7 @@ export function DoctorExamScreen({ appointmentId }: Props) {
             />
             <View style={styles.modalActions}>
               <Button mode="outlined" onPress={() => setShowAddMed(false)} textColor={figmaColors.textSecondary}>
-                Hủy
+                Huỷ
               </Button>
               <Button mode="contained" onPress={addMedicine} buttonColor={figmaColors.primary} disabled={!medName.trim()}>
                 Thêm
@@ -379,7 +395,7 @@ const styles = StyleSheet.create({
   inputWrap: { marginHorizontal: figmaSpacing.lg },
   input: { backgroundColor: figmaColors.surface, fontSize: 14 },
 
-  // Patient
+  // Thông tin bệnh nhân
   patientRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   avatarCircle: {
     width: 52, height: 52, borderRadius: 26,
@@ -396,7 +412,7 @@ const styles = StyleSheet.create({
   notesLabel: { fontSize: 12, fontWeight: '600', color: figmaColors.textMuted, marginBottom: 4 },
   notesText: { fontSize: 14, color: figmaColors.textPrimary },
 
-  // Medicines
+  // Đơn thuốc
   emptyMeds: { marginHorizontal: figmaSpacing.lg, paddingVertical: 16, alignItems: 'center' },
   emptyText: { fontSize: 13, color: figmaColors.textMuted },
   medsList: { marginHorizontal: figmaSpacing.lg, gap: 8 },
@@ -406,7 +422,7 @@ const styles = StyleSheet.create({
   medName: { fontSize: 14, fontWeight: '600', color: figmaColors.textPrimary },
   medDetail: { fontSize: 12, color: figmaColors.textSecondary },
 
-  // Services
+  // Dịch vụ đã sử dụng
   servicesList: { marginHorizontal: figmaSpacing.lg, gap: 6 },
   serviceChip: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
@@ -424,7 +440,7 @@ const styles = StyleSheet.create({
     textAlign: 'right', marginHorizontal: figmaSpacing.lg, marginTop: 8,
   },
 
-  // Complete
+  // Nút hoàn thành ca khám
   completeBtn: { marginHorizontal: figmaSpacing.lg, borderRadius: figmaRadius.md },
   completeBtnContent: { paddingVertical: 6 },
   completedBanner: {
@@ -435,7 +451,7 @@ const styles = StyleSheet.create({
   },
   completedText: { flex: 1, fontSize: 13, fontWeight: '600', color: figmaColors.success },
 
-  // Modal
+  // Modal thêm thuốc
   modalOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center', alignItems: 'center', padding: 24,
@@ -448,7 +464,7 @@ const styles = StyleSheet.create({
   modalInput: { backgroundColor: figmaColors.surface },
   modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 8 },
 
-  // Success
+  // Modal thành công
   successContent: {
     backgroundColor: figmaColors.surface,
     borderRadius: figmaRadius.xl, padding: 32,

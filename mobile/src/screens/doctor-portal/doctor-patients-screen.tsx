@@ -1,3 +1,9 @@
+/**
+ * DoctorPatientsScreen — Màn hình danh sách bệnh nhân của bác sĩ
+ * Thuộc phần của Ngô Đức Sơn (module Booking/Schedule).
+ * Tổng hợp các lịch hẹn đã được xác nhận (loại bỏ PENDING) rồi nhóm theo
+ * bệnh nhân, hiển thị số lần khám và lần khám gần nhất. Hỗ trợ tìm kiếm theo tên.
+ */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
@@ -44,6 +50,7 @@ function formatDate(dateStr?: string): string {
     .padStart(2, '0')}/${d.getFullYear()}`;
 }
 
+// Nhóm danh sách lịch hẹn theo patientId, tính tổng lần khám và ngày khám gần nhất
 function groupByPatient(appts: Appointment[]): PatientGroup[] {
   const map = new Map<string, PatientGroup>();
   for (const a of appts) {
@@ -75,6 +82,10 @@ function groupByPatient(appts: Appointment[]): PatientGroup[] {
   });
 }
 
+/**
+ * Màn hình bệnh nhân: tải lịch hẹn qua GET /appointments/me, lọc bỏ PENDING,
+ * nhóm theo bệnh nhân, hỗ trợ tìm kiếm và mở rộng xem lịch sử từng ca.
+ */
 export function DoctorPatientsScreen() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -82,16 +93,15 @@ export function DoctorPatientsScreen() {
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // Gọi GET /appointments/me (limit 100, sắp xếp mới nhất trước) để lấy toàn bộ lịch hẹn
   const fetchAppointments = useCallback(async () => {
     try {
       const res = await api.get('/appointments/me', {
         params: { limit: 100, sort: 'date', order: 'desc' },
       });
       const { data } = extractPaginatedData<Appointment[]>(res);
-      console.log('[doctor-patients] fetched', data.length, 'appointments, non-PENDING:', data.filter(a => a.status !== 'PENDING').length);
       setAppointments(data);
-    } catch (err) {
-      console.error('[doctor-patients] fetch error:', err);
+    } catch {
     } finally {
       setLoading(false);
     }
@@ -107,13 +117,15 @@ export function DoctorPatientsScreen() {
     setRefreshing(false);
   }, [fetchAppointments]);
 
-  // Only show accepted patients (not PENDING — those are unaccepted specialty-wide)
+  // Loại bỏ ca PENDING (chưa được bác sĩ nhận) — chỉ giữ bệnh nhân đã được xác nhận
+  // (PENDING là ca toàn chuyên khoa chưa ai nhận, không tính là bệnh nhân của bác sĩ)
   const myAppointments = useMemo(
     () => appointments.filter((a) => a.status !== 'PENDING'),
     [appointments]
   );
   const patients = useMemo(() => groupByPatient(myAppointments), [myAppointments]);
 
+  // Lọc danh sách bệnh nhân theo từ khoá tìm kiếm (so sánh tên không phân biệt hoa thường)
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return patients;

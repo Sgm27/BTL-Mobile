@@ -1,3 +1,19 @@
+/**
+ * AppointmentDetailScreen — Màn hình chi tiết lịch hẹn
+ * Thuộc phần của Ngô Đức Sơn — module Booking & Appointment.
+ *
+ * Hiển thị toàn bộ thông tin một lịch hẹn: bác sĩ, lịch khám, dịch vụ,
+ * thanh toán, ghi chú bệnh nhân, chẩn đoán, đánh giá đã gửi.
+ *
+ * Luồng chính:
+ *   1. Fetch GET /api/v1/appointments/:id → hiện thông tin lịch hẹn
+ *   2. Fetch GET /api/v1/payments/appointment/:id → hiện trạng thái thanh toán (nếu có)
+ *   3. Dựa trên status, hiện các nút hành động phù hợp:
+ *      - canReschedule (PENDING)          → nút "Đổi lịch" → RescheduleScreen
+ *      - canCancel (PENDING | CONFIRMED)  → nút "Huỷ lịch" → Alert xác nhận → PUT .../cancel
+ *      - canPay (AWAITING_PAYMENT)        → QR VietQR + nút "Xác nhận đã thanh toán" → PUT .../pay
+ *      - canReview (COMPLETED + chưa có review) → nút "Viết đánh giá" → ReviewScreen
+ */
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -20,7 +36,7 @@ import { cancelAppointment } from '../../services/appointments.service';
 import type { Appointment, Payment } from '../../types';
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Hằng số màu sắc
 // ---------------------------------------------------------------------------
 
 const ORANGE = '#F57C00';
@@ -64,7 +80,7 @@ const STATUS_CONFIG: Record<
     color: '#fff',
     bgColor: figmaColors.error,
     icon: 'close-circle-outline',
-    label: 'Đã hủy',
+    label: 'Đã huỷ',
   },
 };
 
@@ -85,7 +101,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// Info Row
+// Component hàng thông tin (icon + nhãn + giá trị)
 // ---------------------------------------------------------------------------
 
 interface InfoRowProps {
@@ -139,7 +155,7 @@ const infoStyles = StyleSheet.create({
 });
 
 // ---------------------------------------------------------------------------
-// Star Rating Display
+// Component hiển thị đánh giá sao
 // ---------------------------------------------------------------------------
 
 function StarRating({ rating }: { rating: number }) {
@@ -165,7 +181,7 @@ const starStyles = StyleSheet.create({
 });
 
 // ---------------------------------------------------------------------------
-// Main Screen
+// Màn hình chính
 // ---------------------------------------------------------------------------
 
 interface AppointmentDetailScreenProps {
@@ -183,6 +199,7 @@ export function AppointmentDetailScreen({
   const [notice, setNotice] = useState('');
   const [canceling, setCanceling] = useState(false);
 
+  // Fetch chi tiết lịch hẹn (GET /api/v1/appointments/:id) và thông tin thanh toán song song
   const fetchDetail = useCallback(async () => {
     try {
       const data = await extractData<Appointment>(
@@ -190,7 +207,8 @@ export function AppointmentDetailScreen({
       );
       setAppointment(data);
 
-      // Try to fetch payment info
+      // Thử lấy thông tin payment
+      // Thông tin payment có thể chưa tồn tại (lịch mới tạo) → bắt lỗi im lặng
       try {
         const paymentData = await extractData<Payment>(
           await api.get(`/payments/appointment/${appointmentId}`)
@@ -217,16 +235,13 @@ export function AppointmentDetailScreen({
   }, [fetchDetail]);
 
   async function performCancel() {
-    console.log('[appt-detail] canceling', appointmentId);
     setCanceling(true);
     try {
       const updated = await cancelAppointment(appointmentId);
-      console.log('[appt-detail] cancel success, new status:', updated.status);
       setAppointment(updated);
-      setNotice('Đã hủy lịch hẹn thành công.');
-    } catch (err) {
-      console.error('[appt-detail] cancel error:', err);
-      setNotice('Không thể hủy lịch hẹn.');
+      setNotice('Đã huỷ lịch hẹn thành công.');
+    } catch {
+      setNotice('Không thể huỷ lịch hẹn.');
     } finally {
       setCanceling(false);
     }
@@ -234,12 +249,12 @@ export function AppointmentDetailScreen({
 
   function handleCancel() {
     Alert.alert(
-      'Hủy lịch hẹn',
-      'Bạn có chắc muốn hủy lịch hẹn này? Hành động này không thể hoàn tác.',
+      'Huỷ lịch hẹn',
+      'Bạn có chắc muốn huỷ lịch hẹn này? Hành động này không thể hoàn tác.',
       [
         { text: 'Không', style: 'cancel' },
         {
-          text: 'Hủy lịch',
+          text: 'Huỷ lịch',
           style: 'destructive',
           onPress: () => {
             void performCancel();
@@ -251,6 +266,8 @@ export function AppointmentDetailScreen({
 
   const [paying, setPaying] = useState(false);
 
+  // Xác nhận thanh toán: PUT /api/v1/appointments/:id/pay
+  // Sau khi thành công → delay 1.2s → điều hướng đến ReviewScreen để bệnh nhân đánh giá
   async function handlePay() {
     setPaying(true);
     try {
@@ -258,7 +275,7 @@ export function AppointmentDetailScreen({
       const updated = extractData<Appointment>(res);
       setAppointment(updated);
       setNotice('Thanh toán thành công!');
-      // After short delay, navigate to review
+      // Sau một khoảng trễ ngắn, điều hướng đến màn hình đánh giá
       setTimeout(() => {
         router.push({ pathname: '/review', params: { appointmentId } });
       }, 1200);
@@ -304,12 +321,13 @@ export function AppointmentDetailScreen({
   const timeSlot = appointment.timeSlot;
   const services = appointment.services ?? [];
   const review = appointment.review;
+  // Điều kiện hiện nút theo trạng thái lịch hẹn
   const canCancel =
     appointment.status === 'PENDING' || appointment.status === 'CONFIRMED';
-  const canReschedule = appointment.status === 'PENDING';
-  const canPay = appointment.status === 'AWAITING_PAYMENT';
+  const canReschedule = appointment.status === 'PENDING'; // Chỉ đổi được khi chưa có bác sĩ nhận
+  const canPay = appointment.status === 'AWAITING_PAYMENT'; // Bác sĩ đã hoàn tất → cần thanh toán
   const canReview =
-    appointment.status === 'COMPLETED' && !review;
+    appointment.status === 'COMPLETED' && !review; // Chỉ đánh giá 1 lần, sau khi hoàn thành
 
   return (
     <>
@@ -318,7 +336,7 @@ export function AppointmentDetailScreen({
       onRefresh={handleRefresh}
       showsVerticalScrollIndicator={false}
     >
-      {/* Header */}
+      {/* Tiêu đề */}
       <GradientHeader
         title="Chi tiết lịch hẹn"
         colors={[figmaColors.primary, figmaColors.primaryDark]}
@@ -350,7 +368,7 @@ export function AppointmentDetailScreen({
         </FadeInView>
 
         <View style={styles.cardList}>
-          {/* Doctor Card — hide when PENDING (no doctor assigned yet) */}
+          {/* Thẻ bác sĩ — ẩn khi PENDING vì chưa có bác sĩ được phân công */}
           {doctor && appointment.status !== 'PENDING' && (
             <FadeInView delay={60}>
               <TouchableOpacity
@@ -404,7 +422,7 @@ export function AppointmentDetailScreen({
             </FadeInView>
           )}
 
-          {/* Schedule Card */}
+          {/* Thẻ lịch khám */}
           <FadeInView delay={120}>
             <GlassCard style={styles.card} glassStyle="regular">
               <View style={styles.cardInner}>
@@ -448,7 +466,7 @@ export function AppointmentDetailScreen({
             </GlassCard>
           </FadeInView>
 
-          {/* Services Card */}
+          {/* Thẻ dịch vụ */}
           {services.length > 0 && (
             <FadeInView delay={180}>
               <GlassCard style={styles.card} glassStyle="regular">
@@ -486,7 +504,7 @@ export function AppointmentDetailScreen({
             </FadeInView>
           )}
 
-          {/* Total Amount (if no services) */}
+          {/* Tổng tiền (khi không có dịch vụ chi tiết) */}
           {services.length === 0 && appointment.totalAmount > 0 && (
             <FadeInView delay={180}>
               <GlassCard style={styles.card} glassStyle="regular">
@@ -510,7 +528,7 @@ export function AppointmentDetailScreen({
             </FadeInView>
           )}
 
-          {/* Payment Status */}
+          {/* Trạng thái thanh toán */}
           <FadeInView delay={240}>
             <GlassCard style={styles.card} glassStyle="regular">
               <View style={styles.cardInner}>
@@ -579,7 +597,7 @@ export function AppointmentDetailScreen({
             </GlassCard>
           </FadeInView>
 
-          {/* Notes */}
+          {/* Ghi chú bệnh nhân */}
           {appointment.notes && (
             <FadeInView delay={300}>
               <GlassCard style={styles.card} glassStyle="regular">
@@ -598,7 +616,7 @@ export function AppointmentDetailScreen({
             </FadeInView>
           )}
 
-          {/* Diagnosis */}
+          {/* Chẩn đoán */}
           {appointment.diagnosis && (
             <FadeInView delay={360}>
               <GlassCard style={styles.card} glassStyle="regular">
@@ -617,7 +635,7 @@ export function AppointmentDetailScreen({
             </FadeInView>
           )}
 
-          {/* Review (if exists) */}
+          {/* Đánh giá (nếu đã có) */}
           {review && (
             <FadeInView delay={420}>
               <GlassCard style={styles.card} glassStyle="regular">
@@ -642,7 +660,7 @@ export function AppointmentDetailScreen({
             </FadeInView>
           )}
 
-          {/* Actions */}
+          {/* Khu vực hành động: các nút hiện/ẩn tuỳ theo status lịch hẹn */}
           <FadeInView delay={480}>
             <View style={styles.actionsSection}>
               {canReschedule && (
@@ -669,10 +687,11 @@ export function AppointmentDetailScreen({
                   style={styles.cancelBtn}
                   contentStyle={styles.actionBtnContent}
                 >
-                  Hủy lịch hẹn
+                  Huỷ lịch hẹn
                 </Button>
               )}
 
+              {/* canPay: hiện mã QR VietQR sandbox + nút xác nhận thanh toán */}
               {canPay && (
                 <>
                   <GlassCard style={styles.qrCard}>
@@ -743,7 +762,7 @@ export function AppointmentDetailScreen({
 }
 
 // ---------------------------------------------------------------------------
-// Styles
+// Style
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
@@ -809,7 +828,7 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: figmaColors.border,
   },
-  // Doctor
+  // Bác sĩ
   doctorRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -844,7 +863,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: figmaColors.textSecondary,
   },
-  // Services
+  // Dịch vụ
   serviceRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -871,7 +890,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: figmaColors.success,
   },
-  // Payment
+  // Thanh toán
   paymentContent: {
     gap: 8,
   },
@@ -907,13 +926,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignSelf: 'flex-start',
   },
-  // Notes / Diagnosis
+  // Ghi chú / Chẩn đoán
   notesText: {
     fontSize: 14,
     color: figmaColors.textPrimary,
     lineHeight: 20,
   },
-  // Review
+  // Đánh giá
   reviewComment: {
     fontSize: 14,
     color: figmaColors.textPrimary,
@@ -924,7 +943,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: figmaColors.textSecondary,
   },
-  // Actions
+  // Nút hành động
   actionsSection: {
     gap: 12,
     marginTop: 4,

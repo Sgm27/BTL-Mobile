@@ -1,3 +1,10 @@
+/**
+ * ManageTimeSlotsScreen — Màn hình quản lý slot thời gian (30 phút/slot)
+ * Thuộc phần của Ngô Đức Sơn (module Schedule).
+ * Bác sĩ chọn ngày trong tuần, bật/tắt từng slot 30 phút trong khung 08:00–17:00
+ * (slot đã được bệnh nhân đặt sẽ khoá, không thể tắt). Nhấn "Lưu thay đổi" để
+ * gọi PUT /schedules/doctor/time-slots cập nhật lên server.
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, View } from 'react-native';
 import { Snackbar, Text } from 'react-native-paper';
@@ -23,6 +30,7 @@ interface Slot {
   state: SlotState;
 }
 
+// Tạo danh sách 20 slot 30 phút từ 08:00 đến 17:00 với state mặc định là 'NONE'
 function buildSlots(): Slot[] {
   const slots: Slot[] = [];
   for (let h = 8; h <= 17; h++) {
@@ -58,10 +66,11 @@ function formatDayNum(dateStr: string): string {
   return String(d.getDate());
 }
 
+// Vòng trạng thái khi bác sĩ nhấn vào slot: NONE → AVAILABLE → NONE (BOOKED không đổi được)
 function nextState(s: SlotState): SlotState {
   if (s === 'NONE') return 'AVAILABLE';
   if (s === 'AVAILABLE') return 'NONE';
-  return 'BOOKED'; // booked is not toggleable
+  return 'BOOKED'; // đã có lịch đặt, không thể toggle
 }
 
 interface SpringPressableProps {
@@ -94,9 +103,12 @@ function SpringPressable({ onPress, children, style, disabled }: SpringPressable
   );
 }
 
+/**
+ * Màn hình quản lý slot giờ: bác sĩ chọn ngày → toggle từng ô 30 phút → lưu.
+ * Slot BOOKED (đã có bệnh nhân đặt) bị khoá, không thể thay đổi.
+ */
 export function ManageTimeSlotsScreen() {
   const weekDays = useMemo(() => getWeekDays(), []);
-  const todayStr = new Date().toISOString().slice(0, 10);
   const initialDate = weekDays.find((d) => d.isToday)?.date ?? weekDays[0].date;
 
   const [selectedDate, setSelectedDate] = useState(initialDate);
@@ -105,6 +117,7 @@ export function ManageTimeSlotsScreen() {
   const [saving, setSaving] = useState(false);
   const [snack, setSnack] = useState<string | null>(null);
 
+  // Gọi GET /schedules/doctor/time-slots?date=... rồi merge với danh sách slot tĩnh
   const loadSlots = useCallback(async (dateStr: string) => {
     try {
       const res = await api.get('/schedules/doctor/time-slots', {
@@ -141,6 +154,7 @@ export function ManageTimeSlotsScreen() {
 
   const currentSlots = slotsByDate[selectedDate] ?? [];
 
+  // Thống kê số slot sẵn sàng / đã đặt / tổng cho ngày hiện tại
   const counts = useMemo(() => {
     let available = 0;
     let booked = 0;
@@ -151,6 +165,7 @@ export function ManageTimeSlotsScreen() {
     return { available, booked, total: currentSlots.length };
   }, [currentSlots]);
 
+  // Bật/tắt state của slot trong local state (chưa gọi API); slot BOOKED bị bỏ qua
   const toggleSlot = (slotId: string) => {
     setSlotsByDate((prev) => ({
       ...prev,
@@ -160,6 +175,8 @@ export function ManageTimeSlotsScreen() {
     }));
   };
 
+  // Gọi PUT /schedules/doctor/time-slots để lưu danh sách slot AVAILABLE;
+  // tự động tính endTime = startTime + 30 phút cho mỗi slot trước khi gửi
   const handleSave = async () => {
     const available = currentSlots.filter((s) => s.state === 'AVAILABLE');
     setSaving(true);
@@ -188,7 +205,7 @@ export function ManageTimeSlotsScreen() {
       <ScreenContainer refreshing={refreshing} onRefresh={onRefresh}>
         <GradientHeader
           title="Quản lý slot thời gian"
-          subtitle="Tùy chỉnh khung giờ làm việc"
+          subtitle="Tuỳ chỉnh khung giờ làm việc"
           colors={HEADER_COLORS}
         />
 
