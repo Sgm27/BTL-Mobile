@@ -1,0 +1,4 @@
+{
+  "$schema": "https://opencode.ai/schema.json",
+  "instructions": "Read CLAUDE.md for full project context. This is a Healthcare Appointment Mobile System with backend/ (Express+Prisma) and mobile/ (React Native Expo). Follow all conventions in CLAUDE.md strictly."
+}

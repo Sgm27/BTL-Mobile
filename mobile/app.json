@@ -1,0 +1,59 @@
+{
+  "expo": {
+    "name": "BTL Healthcare",
+    "slug": "btl-healthcare",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "btlhealthcare",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ptit.btlhealthcare",
+      "config": {
+        "googleMapsApiKey": ""
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.ptit.btlhealthcare",
+      "config": {
+        "googleMaps": {
+          "apiKey": ""
+        }
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow BTL Healthcare to access your camera for prescription scanning."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow BTL Healthcare to access your photos for avatar and prescriptions."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow BTL Healthcare to use your location to find nearby clinics."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#2196F3"
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      "expo-video"
+    ]
+  }
+}

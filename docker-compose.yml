@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: btl-postgres
+    restart: unless-stopped
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: btl_user
+      POSTGRES_PASSWORD: btl_password
+      POSTGRES_DB: btl_healthcare
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U btl_user -d btl_healthcare']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: btl-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: btl-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token eyJhIjoiMmMzNzRkZTFlMzg2ODRlYWVhZWE4YjZkNTNhMGZiNWUiLCJ0IjoiODc1M2NiOWYtNjMxNi00OTAwLThhZGQtYzA5NTM0ZGY3NDFmIiwicyI6IlpEZzNPR00yTkdNdE5UVTVZaTAwWlRCa0xUbGlPRFV0TUdWak1tRm1aVFZoWXpaayJ9
+    network_mode: host
+
+volumes:
+  postgres_data:
+  redis_data:

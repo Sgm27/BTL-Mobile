@@ -1,0 +1,489 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum Role {
+  PATIENT
+  DOCTOR
+  ADMIN
+}
+
+enum DoctorStatus {
+  PENDING
+  ACTIVE
+  REJECTED
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  AWAITING_PAYMENT
+  COMPLETED
+  CANCELED
+}
+
+enum PaymentMethod {
+  CASH
+  VNPAY
+  MOMO
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum Shift {
+  MORNING
+  AFTERNOON
+}
+
+enum HealthMetricType {
+  BLOOD_PRESSURE_SYSTOLIC
+  BLOOD_PRESSURE_DIASTOLIC
+  WEIGHT
+  HEIGHT
+  BLOOD_SUGAR
+  HEART_RATE
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ChatMessageRole {
+  USER
+  ASSISTANT
+}
+
+enum NotificationType {
+  APPOINTMENT_REMINDER
+  APPOINTMENT_CONFIRMED
+  APPOINTMENT_CANCELED
+  MEDICINE_REMINDER
+  HEALTH_ALERT
+  SYSTEM
+}
+
+enum ReminderStatus {
+  TAKEN
+  SKIPPED
+  MISSED
+}
+
+// ============================================
+// AUTH & USERS (Owner: Kien)
+// ============================================
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  password     String
+  role         Role      @default(PATIENT)
+  name         String
+  phone        String?
+  dateOfBirth  DateTime? @map("date_of_birth")
+  address      String?
+  avatarUrl    String?   @map("avatar_url")
+  insuranceId  String?   @map("insurance_id")
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  // Relations
+  doctor        Doctor?
+  appointments  Appointment[]    @relation("PatientAppointments")
+  reviews       Review[]
+  healthMetrics HealthMetric[]
+  healthAlerts  HealthAlert[]
+  prescriptions Prescription[]
+  reminders     MedicineReminder[]
+  chatSessions  ChatSession[]
+  notifications Notification[]
+  payments      Payment[]
+
+  @@map("users")
+}
+
+// ============================================
+// DOCTORS & CLINICS (Owner: Hieu admin, Tu Anh search)
+// ============================================
+
+model Doctor {
+  id              String       @id @default(uuid())
+  userId          String       @unique @map("user_id")
+  specialtyId     String       @map("specialty_id")
+  clinicId        String?      @map("clinic_id")
+  experienceYears Int          @default(0) @map("experience_years")
+  bio             String?
+  licenseNumber   String?      @map("license_number")
+  licenseImageUrl String?      @map("license_image_url")
+  consultationFee Decimal      @default(0) @map("consultation_fee") @db.Decimal(10, 2)
+  status          DoctorStatus @default(PENDING)
+  rejectionReason String?      @map("rejection_reason")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+  deletedAt       DateTime?    @map("deleted_at")
+
+  // Relations
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  specialty       Specialty         @relation(fields: [specialtyId], references: [id])
+  clinic          Clinic?           @relation(fields: [clinicId], references: [id])
+  doctorSchedules DoctorSchedule[]
+  timeSlots       TimeSlot[]
+  appointments    Appointment[]
+  reviews         Review[]
+  doctorServices  DoctorService[]
+
+  @@map("doctors")
+}
+
+model Specialty {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  description String?
+  iconUrl     String?   @map("icon_url")
+  symptoms    String[]  @default([])
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  // Relations
+  doctors Doctor[]
+
+  @@map("specialties")
+}
+
+model Clinic {
+  id           String    @id @default(uuid())
+  name         String
+  address      String
+  lat          Decimal?  @db.Decimal(10, 7)
+  lng          Decimal?  @db.Decimal(10, 7)
+  phone        String?
+  openingHours String?   @map("opening_hours")
+  imageUrl     String?   @map("image_url")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  // Relations
+  doctors Doctor[]
+
+  @@map("clinics")
+}
+
+model Service {
+  id        String    @id @default(uuid())
+  name      String
+  price     Decimal   @db.Decimal(10, 2)
+  category  String?
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  // Relations
+  doctorServices      DoctorService[]
+  appointmentServices AppointmentService[]
+
+  @@map("services")
+}
+
+model DoctorService {
+  id        String  @id @default(uuid())
+  doctorId  String  @map("doctor_id")
+  serviceId String  @map("service_id")
+  price     Decimal @db.Decimal(10, 2)
+
+  doctor  Doctor  @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([doctorId, serviceId])
+  @@map("doctor_services")
+}
+
+// ============================================
+// SCHEDULING (Owner: Son + Hieu for work_schedules)
+// ============================================
+
+model WorkSchedule {
+  id        String   @id @default(uuid())
+  date      DateTime @db.Date
+  shift     Shift
+  startTime String   @map("start_time")
+  endTime   String   @map("end_time")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  doctorSchedules DoctorSchedule[]
+
+  @@unique([date, shift])
+  @@map("work_schedules")
+}
+
+model DoctorSchedule {
+  id             String @id @default(uuid())
+  doctorId       String @map("doctor_id")
+  workScheduleId String @map("work_schedule_id")
+  room           String?
+
+  doctor       Doctor       @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  workSchedule WorkSchedule @relation(fields: [workScheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([doctorId, workScheduleId])
+  @@map("doctor_schedules")
+}
+
+model TimeSlot {
+  id        String   @id @default(uuid())
+  doctorId  String   @map("doctor_id")
+  date      DateTime @db.Date
+  startTime String   @map("start_time")
+  endTime   String   @map("end_time")
+  isBooked  Boolean  @default(false) @map("is_booked")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  doctor      Doctor       @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  appointment Appointment?
+
+  @@unique([doctorId, date, startTime])
+  @@map("time_slots")
+}
+
+// ============================================
+// APPOINTMENTS & REVIEWS (Owner: Son)
+// ============================================
+
+model Appointment {
+  id          String            @id @default(uuid())
+  patientId   String            @map("patient_id")
+  doctorId    String            @map("doctor_id")
+  timeSlotId  String            @unique @map("time_slot_id")
+  status          AppointmentStatus @default(PENDING)
+  notes           String?
+  diagnosis       String?
+  rejectionReason String?           @map("rejection_reason")
+  totalAmount     Decimal           @default(0) @map("total_amount") @db.Decimal(10, 2)
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  canceledAt      DateTime?         @map("canceled_at")
+
+  // Relations
+  patient  User     @relation("PatientAppointments", fields: [patientId], references: [id])
+  doctor   Doctor   @relation(fields: [doctorId], references: [id])
+  timeSlot TimeSlot @relation(fields: [timeSlotId], references: [id])
+  review   Review?
+  followUp FollowUp?
+  payment  Payment?
+  services AppointmentService[]
+
+  @@map("appointments")
+}
+
+model AppointmentService {
+  id            String  @id @default(uuid())
+  appointmentId String  @map("appointment_id")
+  serviceId     String  @map("service_id")
+  price         Decimal @db.Decimal(10, 2)
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  service     Service     @relation(fields: [serviceId], references: [id])
+
+  @@map("appointment_services")
+}
+
+model Review {
+  id            String   @id @default(uuid())
+  appointmentId String   @unique @map("appointment_id")
+  patientId     String   @map("patient_id")
+  doctorId      String   @map("doctor_id")
+  rating        Int
+  comment       String?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  patient     User        @relation(fields: [patientId], references: [id])
+  doctor      Doctor      @relation(fields: [doctorId], references: [id])
+
+  @@map("reviews")
+}
+
+model FollowUp {
+  id            String   @id @default(uuid())
+  appointmentId String   @unique @map("appointment_id")
+  scheduledDate DateTime @map("scheduled_date") @db.Date
+  notes         String?
+  isConfirmed   Boolean  @default(false) @map("is_confirmed")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@map("follow_ups")
+}
+
+// ============================================
+// PAYMENTS (Owner: Hieu)
+// ============================================
+
+model Payment {
+  id            String        @id @default(uuid())
+  appointmentId String        @unique @map("appointment_id")
+  userId        String        @map("user_id")
+  amount        Decimal       @db.Decimal(10, 2)
+  method        PaymentMethod @default(CASH)
+  status        PaymentStatus @default(PENDING)
+  transactionId String?       @map("transaction_id")
+  paidAt        DateTime?     @map("paid_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id])
+  user        User        @relation(fields: [userId], references: [id])
+
+  @@map("payments")
+}
+
+// ============================================
+// HEALTH TRACKING (Owner: Hieu)
+// ============================================
+
+model HealthMetric {
+  id         String           @id @default(uuid())
+  userId     String           @map("user_id")
+  type       HealthMetricType
+  value      Decimal          @db.Decimal(10, 2)
+  recordedAt DateTime         @default(now()) @map("recorded_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, recordedAt])
+  @@map("health_metrics")
+}
+
+model HealthAlert {
+  id         String        @id @default(uuid())
+  userId     String        @map("user_id")
+  metricType HealthMetricType @map("metric_type")
+  message    String
+  severity   AlertSeverity
+  isRead     Boolean       @default(false) @map("is_read")
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("health_alerts")
+}
+
+// ============================================
+// PRESCRIPTIONS & REMINDERS (Owner: Tu Anh)
+// ============================================
+
+model Prescription {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  doctorId  String?  @map("doctor_id")
+  imageUrl  String   @map("image_url")
+  ocrData   Json?    @map("ocr_data")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reminders MedicineReminder[]
+
+  @@map("prescriptions")
+}
+
+model MedicineReminder {
+  id             String  @id @default(uuid())
+  userId         String  @map("user_id")
+  prescriptionId String? @map("prescription_id")
+  medicineName   String  @map("medicine_name")
+  dosage         String
+  times          Json
+  isActive       Boolean @default(true) @map("is_active")
+  startDate      DateTime @map("start_date") @db.Date
+  endDate        DateTime? @map("end_date") @db.Date
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prescription Prescription? @relation(fields: [prescriptionId], references: [id])
+  logs         ReminderLog[]
+
+  @@map("medicine_reminders")
+}
+
+model ReminderLog {
+  id         String         @id @default(uuid())
+  reminderId String         @map("reminder_id")
+  scheduledAt DateTime      @map("scheduled_at")
+  status     ReminderStatus
+  createdAt  DateTime       @default(now()) @map("created_at")
+
+  reminder MedicineReminder @relation(fields: [reminderId], references: [id], onDelete: Cascade)
+
+  @@map("reminder_logs")
+}
+
+// ============================================
+// CHAT / AI (Owner: Kien)
+// ============================================
+
+model ChatSession {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  title     String?
+  summary   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id        String          @id @default(uuid())
+  sessionId String          @map("session_id")
+  role      ChatMessageRole
+  content   String
+  createdAt DateTime        @default(now()) @map("created_at")
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("chat_messages")
+}
+
+// ============================================
+// NOTIFICATIONS (Owner: Tu Anh)
+// ============================================
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String           @map("user_id")
+  title     String
+  body      String
+  type      NotificationType
+  data      Json?
+  isRead    Boolean          @default(false) @map("is_read")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}

@@ -1,0 +1,15 @@
+You are working on a Healthcare Appointment Mobile System - a university group project.
+
+Read CLAUDE.md for full project context, conventions, and module ownership.
+
+Key rules:
+- TypeScript strict mode everywhere
+- Backend: Express + Prisma + PostgreSQL. Pattern: Controller → Service → Prisma
+- Mobile: React Native Expo + Expo Router + React Native Paper + Zustand
+- API responses: { success: true, data } or { success: false, error: { code, message } }
+- Validate with Zod on backend, never trust client input
+- Use named exports, kebab-case files, PascalCase components
+- Each module has: controller.ts, service.ts, routes.ts, dto.ts, types.ts
+- Never add Co-Authored-By to commits
+- Commit with the correct team member's git identity based on module ownership (see CLAUDE.md)
+- iOS 26 Liquid Glass: use NativeTabs (expo-router/unstable-native-tabs) for tab bar, GlassCard for cards. Never use Tabs from expo-router. See CLAUDE.md for full guide.
